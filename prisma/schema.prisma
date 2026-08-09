@@ -1,0 +1,151 @@
+// CivicVerify — Prisma Schema
+// Phase 1: Foundation schema
+// Phase 3B: Added resolutionNotes to Complaint and isRepairEvidence to Evidence
+// Designed to support the full REPORT → REPAIR → VERIFY → ACCOUNTABILITY flow
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+/// The role a user plays in the system.
+/// CITIZEN  — reports issues, can submit verification evidence
+/// AUTHORITY — processes complaints, can claim resolution
+/// PUBLIC    — read-only observer (no account required for some views)
+enum Role {
+  CITIZEN
+  AUTHORITY
+  PUBLIC
+}
+
+/// Lifecycle states of a civic complaint.
+/// Deliberately separated CLAIMED_RESOLVED from VERIFIED so the system
+/// can enforce evidence-based verification before considering a case closed.
+enum ComplaintStatus {
+  SUBMITTED        // Citizen submitted the complaint
+  IN_PROGRESS      // Authority acknowledged and is working on it
+  CLAIMED_RESOLVED // Authority claims it is resolved — NOT yet verified
+  VERIFIED         // Independent evidence confirms resolution
+  DISPUTED         // Verification evidence contradicts the claim
+  ESCALATED        // Dispute unresolved — escalated for review
+}
+
+/// Type of evidence attached to a complaint or verification.
+enum EvidenceType {
+  PHOTO
+  VIDEO
+  DOCUMENT
+}
+
+/// Outcome of an AI or manual verification pass.
+enum VerificationResult {
+  VERIFIED      // Evidence confirms resolution
+  DISPUTED      // Evidence contradicts resolution claim
+  INCONCLUSIVE  // Evidence insufficient to determine outcome
+}
+
+enum AiAssessmentResult {
+  LIKELY_RESOLVED
+  NEEDS_REVIEW
+  LIKELY_NOT_RESOLVED
+}
+
+enum AiAssessmentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+/// A registered user of the system.
+model User {
+  id           String     @id @default(cuid())
+  name         String
+  email        String     @unique
+  passwordHash String
+  role         Role       @default(CITIZEN)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  complaints     Complaint[]    @relation("ComplaintAuthor")
+  evidence       Evidence[]     @relation("EvidenceUploader")
+  verifications  Verification[] @relation("CitizenVerifier")
+}
+
+/// A civic complaint filed by a citizen.
+model Complaint {
+  id              String          @id @default(cuid())
+  title           String
+  description     String
+  category        String
+  latitude        Float?
+  longitude       Float?
+  status          ComplaintStatus @default(SUBMITTED)
+  resolutionNotes String?         // Official notes submitted by authority when claiming resolution
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relationships
+  authorId     String
+  author       User          @relation("ComplaintAuthor", fields: [authorId], references: [id])
+  evidence     Evidence[]
+  verifications Verification[]
+  aiAssessment AiAssessment?
+}
+
+/// Evidence attached to a complaint (initial report) or verification pass.
+model Evidence {
+  id               String       @id @default(cuid())
+  imageUrl         String
+  type             EvidenceType @default(PHOTO)
+  isRepairEvidence Boolean      @default(false) // true if uploaded by authority as repair proof
+  createdAt        DateTime     @default(now())
+
+  // Who uploaded this evidence
+  uploadedById String
+  uploadedBy   User       @relation("EvidenceUploader", fields: [uploadedById], references: [id])
+
+  // Which complaint this evidence belongs to
+  complaintId String
+  complaint   Complaint  @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+}
+
+/// A verification record created when a citizen verifies or disputes
+/// an authority resolution claim. citizenId links to the citizen who acted.
+model Verification {
+  id              String             @id @default(cuid())
+  similarityScore Float?             // 0.0–1.0, null until scored
+  confidenceScore Float?             // 0.0–1.0, null until scored
+  result          VerificationResult?
+  reasoning       String?            // Explanation / dispute reason + optional detail
+  createdAt       DateTime           @default(now())
+
+  // Which citizen performed this verification
+  citizenId String
+  citizen   User      @relation("CitizenVerifier", fields: [citizenId], references: [id])
+
+  // Which complaint this verification belongs to
+  complaintId String
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+}
+
+/// AI multimodal visual assessment record comparing original vs repair evidence.
+model AiAssessment {
+  id              String             @id @default(cuid())
+  result          AiAssessmentResult?
+  confidenceScore Float?             // 0.0–1.0
+  explanation     String?
+  modelName       String             @default("meta-llama/llama-4-scout-17b-16e-instruct")
+  status          AiAssessmentStatus @default(PENDING)
+  createdAt       DateTime           @default(now())
+
+  complaintId     String             @unique
+  complaint       Complaint          @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+}
+

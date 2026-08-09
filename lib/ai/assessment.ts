@@ -131,6 +131,14 @@ export async function runAiAssessment(
     const citizenDataUrl = await readImageAsDataUrl(context.citizenPhotoUrl);
     const repairDataUrl = await readImageAsDataUrl(context.repairPhotoUrl);
 
+    // Require at least one actual image — without visual evidence the analysis is meaningless
+    if (!citizenDataUrl && !repairDataUrl) {
+      console.error(
+        "[AI Assessment Error] No images could be loaded — skipping Groq call (no visual evidence available)."
+      );
+      return null;
+    }
+
     const systemPrompt = `You are an evidence-analysis assistant for a civic accountability platform.
 Your role is strictly advisory. You must NEVER claim that a repair is definitively complete or fabricate evidence.
 Do NOT output any <think> tags or internal chain-of-thought reasoning. Immediately and strictly return structured JSON.`;

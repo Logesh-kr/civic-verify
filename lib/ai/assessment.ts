@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs/promises";
 import Groq from "groq-sdk";
 import type { AiAssessmentResult } from "@prisma/client";
 
@@ -48,22 +49,36 @@ async function readImageAsDataUrl(
 ): Promise<string | null> {
   if (!url) return null;
 
-  const safePath = getSafeUploadPath(url);
-  if (!safePath) {
-    console.error(`[AI Assessment Error] Invalid or unsafe upload path: ${url}`);
-    return null;
-  }
-
   try {
-    // Dynamically import sharp (server-side only, already installed as transitive dep)
     const sharp = (await import("sharp")).default;
-    const resizedBuffer = await sharp(safePath)
+    let imageBuffer: Buffer;
+
+    if (url.startsWith("http://") || url.startsWith("https://")) {
+      console.log(`[AI Assessment] Fetching remote image for Groq: ${url}`);
+      const res = await fetch(url);
+      if (!res.ok) {
+        console.error(`[AI Assessment Error] Failed to fetch remote image: ${url} (HTTP ${res.status})`);
+        return null;
+      }
+      const arrayBuf = await res.arrayBuffer();
+      imageBuffer = Buffer.from(arrayBuf);
+    } else {
+      const safePath = getSafeUploadPath(url);
+      if (!safePath) {
+        console.error(`[AI Assessment Error] Invalid or unsafe upload path: ${url}`);
+        return null;
+      }
+      imageBuffer = await fs.readFile(safePath);
+    }
+
+    const resizedBuffer = await sharp(imageBuffer)
       .resize(MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION, {
         fit: "inside",
         withoutEnlargement: true,
       })
       .jpeg({ quality: 60 })
       .toBuffer();
+
     const base64 = resizedBuffer.toString("base64");
     console.log(
       `[AI Assessment] Image resized for Groq: ${url} → ${resizedBuffer.length} bytes (base64: ${base64.length} chars)`

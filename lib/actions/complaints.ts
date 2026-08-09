@@ -1,7 +1,5 @@
 "use server";
 
-import fs from "node:fs/promises";
-import path from "node:path";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
@@ -9,6 +7,7 @@ import { createComplaintSchema } from "@/lib/validations";
 import type { ApiResponse } from "@/types";
 import { EvidenceType, ComplaintStatus, AiAssessmentStatus } from "@prisma/client";
 import { runAiAssessment } from "@/lib/ai/assessment";
+import { uploadImage } from "@/lib/storage";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB limit
 const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
@@ -77,18 +76,7 @@ export async function createComplaintAction(
     }
 
     try {
-      const bytes = await photoFile.arrayBuffer();
-      const buffer = Buffer.from(bytes);
-
-      const ext = photoFile.name.split(".").pop() || "jpg";
-      const filename = `evidence_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
-      const uploadDir = path.join(process.cwd(), "public", "uploads");
-
-      await fs.mkdir(uploadDir, { recursive: true });
-      const filePath = path.join(uploadDir, filename);
-      await fs.writeFile(filePath, buffer);
-
-      imageUrl = `/uploads/${filename}`;
+      imageUrl = await uploadImage(photoFile, "evidence");
     } catch (err) {
       console.error("Error saving uploaded image:", err);
       return {
@@ -271,19 +259,8 @@ export async function claimResolutionAction(
       };
     }
 
-    // Save repair evidence photo locally
-    const bytes = await photoFile.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-
-    const ext = photoFile.name.split(".").pop() || "jpg";
-    const filename = `repair_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
-    const uploadDir = path.join(process.cwd(), "public", "uploads");
-
-    await fs.mkdir(uploadDir, { recursive: true });
-    const filePath = path.join(uploadDir, filename);
-    await fs.writeFile(filePath, buffer);
-
-    const imageUrl = `/uploads/${filename}`;
+    // Upload repair evidence photo to persistent storage
+    const imageUrl = await uploadImage(photoFile, "repair");
 
     // Create Evidence record for Authority Repair Evidence
     await prisma.evidence.create({
